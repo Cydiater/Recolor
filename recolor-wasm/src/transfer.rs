@@ -111,10 +111,55 @@ fn pixel_transfer(ctx: &TransferContext, rgb: [f64; 3]) -> [f64; 3] {
 }
 
 pub fn transfer(image: &mut RgbImage, km_labs: &[[f64; 3]], new_labs: &[[f64; 3]]) {
-    let ctx = TransferContext::new(&km_labs, &new_labs).unwrap();
+    let ctx = TransferContext::new(km_labs, new_labs).unwrap();
+    let mut color_map = [[[[0f64; 3]; TRANSFER_BIN_COUNT]; TRANSFER_BIN_COUNT]; TRANSFER_BIN_COUNT];
+    #[allow(clippy::needless_range_loop)]
+    for ri in 0..TRANSFER_BIN_COUNT {
+        for gi in 0..TRANSFER_BIN_COUNT {
+            for bi in 0..TRANSFER_BIN_COUNT {
+                let [r, g, b] = [
+                    (ri * TRANSFER_BIN_WIDTH) as f64,
+                    (gi * TRANSFER_BIN_WIDTH) as f64,
+                    (bi * TRANSFER_BIN_WIDTH) as f64,
+                ];
+                let [nr, ng, gb] = pixel_transfer(&ctx, [r, g, b]);
+                color_map[ri][gi][bi] = [nr, ng, gb];
+            }
+        }
+    }
     image.pixels_mut().for_each(|p| {
         let [r, g, b] = p.0;
-        let [nr, ng, nb] = pixel_transfer(&ctx, [r as f64, g as f64, b as f64]);
-        p.0 = [nr as u8, ng as u8, nb as u8];
+        let [ri, gi, bi] = [
+            r as usize / TRANSFER_BIN_WIDTH,
+            g as usize / TRANSFER_BIN_WIDTH,
+            b as usize / TRANSFER_BIN_WIDTH,
+        ];
+        let nrgb = if ri + 1 >= TRANSFER_BIN_COUNT
+            || gi + 1 >= TRANSFER_BIN_COUNT
+            || bi + 1 >= TRANSFER_BIN_COUNT
+        {
+            color_map[ri][gi][bi]
+        } else {
+            let rt = (r as f64 - (ri * TRANSFER_BIN_WIDTH) as f64) / TRANSFER_BIN_WIDTH as f64;
+            let gt = (g as f64 - (gi * TRANSFER_BIN_WIDTH) as f64) / TRANSFER_BIN_WIDTH as f64;
+            let bt = (b as f64 - (bi * TRANSFER_BIN_WIDTH) as f64) / TRANSFER_BIN_WIDTH as f64;
+            let mut c = [[[Vec3([0f64; 3]); 2]; 2]; 2];
+            for i in 0..2 {
+                for j in 0..2 {
+                    for k in 0..2 {
+                        c[i][j][k] = Vec3(color_map[ri + i][gi + j][bi + k]);
+                    }
+                }
+            }
+            let c00 = c[0][0][0] * (1f64 - rt) + c[1][0][0] * rt;
+            let c01 = c[0][0][1] * (1f64 - rt) + c[1][0][1] * rt;
+            let c10 = c[0][1][0] * (1f64 - rt) + c[1][1][0] * rt;
+            let c11 = c[0][1][1] * (1f64 - rt) + c[1][1][1] * rt;
+            let c0 = c00 * (1f64 - gt) + c10 * gt;
+            let c1 = c01 * (1f64 - gt) + c11 * gt;
+            let c = c0 * (1f64 - bt) + c1 * bt;
+            c.0
+        };
+        p.0 = [nrgb[0] as u8, nrgb[1] as u8, nrgb[2] as u8];
     });
 }
